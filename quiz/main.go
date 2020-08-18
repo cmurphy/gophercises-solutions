@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 )
 
 func getProblems(csvFile string) ([][]string, error) {
@@ -23,7 +24,9 @@ func getProblems(csvFile string) ([][]string, error) {
 	return problems, nil
 }
 
-func startQuiz(problems [][]string) (score int) {
+var score int
+
+func startQuiz(problems [][]string, done chan bool) {
 	for i, p := range problems {
 		question := p[0]
 		answer := p[1]
@@ -34,18 +37,25 @@ func startQuiz(problems [][]string) (score int) {
 			score++
 		}
 	}
-	return
+	close(done)
 }
 
 func main() {
 	csv := flag.String("csv", "problems.csv", "a CSV file in the format of 'question,answer'")
+	limit := flag.Int("limit", 30, "the time limit for the quiz in seconds")
 	flag.Parse()
 	problems, err := getProblems(*csv)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	score := startQuiz(problems)
 	maxScore := len(problems)
-	fmt.Printf("You scored %d out of %d.\n", score, maxScore)
+	done := make(chan bool)
+	go startQuiz(problems, done)
+	select {
+	case <-done:
+		fmt.Printf("You scored %d out of %d.\n", score, maxScore)
+	case <-time.After(time.Duration(*limit) * time.Second):
+		fmt.Printf("\nYou scored %d out of %d.\n", score, maxScore)
+	}
 }
