@@ -19,20 +19,18 @@ type Url struct {
 	Loc     string   `xml:"loc"`
 }
 
-type site struct {
-	url      string
-	domain   string
-	visited  map[string]bool
+type tree struct {
+	visited  map[string]struct{}
 	maxDepth int
 }
 
-func (s *site) formatURL(url string) (string, error) {
+func formatURL(url string, baseURL *neturl.URL) (string, error) {
 	parsedURL, err := neturl.Parse(url)
 	if err != nil {
 		return "", err
 	}
 	if parsedURL.Scheme == "" {
-		return s.url + strings.TrimPrefix(url, "/"), nil
+		return baseURL.String() + strings.TrimPrefix(url, "/"), nil
 	}
 	if parsedURL.Scheme != "http" && parsedURL.Scheme != "https" {
 		return "", fmt.Errorf("not an HTTP URL")
@@ -40,13 +38,13 @@ func (s *site) formatURL(url string) (string, error) {
 	return url, nil
 }
 
-func (s *site) isInternal(url string) bool {
+func isInternal(url string, baseURL *neturl.URL) bool {
 	parsedURL, err := neturl.Parse(url)
 	if err != nil {
 		//fmt.Printf("invalid URL %s\n", url)
 		return false
 	}
-	return parsedURL.Host == s.domain
+	return parsedURL.Host == baseURL.Host
 }
 
 func isAnchorLink(url string) bool {
@@ -56,13 +54,17 @@ func isAnchorLink(url string) bool {
 	return false
 }
 
-func (s *site) getPageLinks(url string) ([]string, error) {
+func (t *tree) getPageLinks(url string) ([]string, error) {
 	r, err := http.Get(url)
+	baseURL := &neturl.URL{
+		Scheme: r.Request.URL.Scheme,
+		Host:   r.Request.URL.Host,
+	}
 	if err != nil {
 		fmt.Println(err)
 		return nil, err
 	}
-	s.visited[url] = true
+	t.visited[url] = struct{}{}
 	links, err := link.Parse(r.Body)
 	if err != nil {
 		return nil, err
@@ -73,16 +75,16 @@ func (s *site) getPageLinks(url string) ([]string, error) {
 		if isAnchorLink(l.Href) {
 			continue
 		}
-		url, err = s.formatURL(l.Href)
+		url, err = formatURL(l.Href, baseURL)
 		if err != nil {
 			//fmt.Printf("skipping invalid link %s\n", url)
 			continue
 		}
-		if !s.isInternal(url) {
+		if !isInternal(url, baseURL) {
 			//fmt.Printf("skipping external link %s\n", url)
 			continue
 		}
-		if _, ok := s.visited[url]; ok {
+		if _, ok := t.visited[url]; ok {
 			//fmt.Printf("skipping visited link %s\n", url)
 			continue
 		}
@@ -91,18 +93,18 @@ func (s *site) getPageLinks(url string) ([]string, error) {
 	return result, nil
 }
 
-func (s *site) followLink(url string, depth int) ([]string, error) {
+func (t *tree) followLink(url string, depth int) ([]string, error) {
 	//fmt.Printf("GET %s\n", url)
-	if s.maxDepth >= 0 && depth > s.maxDepth {
+	if t.maxDepth >= 0 && depth > t.maxDepth {
 		//fmt.Println("exceeded max depth")
 		return nil, nil
 	}
-	result, err := s.getPageLinks(url)
+	result, err := t.getPageLinks(url)
 	if err != nil {
 		return nil, err
 	}
 	for _, l := range result {
-		childLinks, err := s.followLink(l, depth+1)
+		childLinks, err := t.followLink(l, depth+1)
 		if err != nil {
 			return nil, err
 		}
@@ -111,28 +113,12 @@ func (s *site) followLink(url string, depth int) ([]string, error) {
 	return result, nil
 }
 
-func newSite(url string, maxDepth int) (*site, error) {
-	if !strings.HasSuffix(url, "/") {
-		url = url + "/"
-	}
-	parsedURL, err := neturl.Parse(url)
-	s := site{}
-	if err != nil {
-		return &s, err
-	}
-	s.url = url
-	s.domain = parsedURL.Host
-	s.visited = make(map[string]bool)
-	s.maxDepth = maxDepth
-	return &s, nil
-}
-
 func NewSiteMap(url string, maxDepth int) (*SiteMap, error) {
-	s, err := newSite(url, maxDepth)
-	if err != nil {
-		return nil, err
+	t := &tree{
+		maxDepth: maxDepth,
+		visited:  make(map[string]struct{}),
 	}
-	links, err := s.followLink(url, 0)
+	links, err := t.followLink(url, 0)
 	if err != nil {
 		return nil, err
 	}
