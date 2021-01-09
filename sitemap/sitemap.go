@@ -20,9 +20,10 @@ type Url struct {
 }
 
 type site struct {
-	url     string
-	domain  string
-	visited map[string]bool
+	url      string
+	domain   string
+	visited  map[string]bool
+	maxDepth int
 }
 
 func (s *site) formatURL(url string) (string, error) {
@@ -55,21 +56,20 @@ func isAnchorLink(url string) bool {
 	return false
 }
 
-func (s *site) followLink(url string) ([]string, error) {
-	//fmt.Printf("GET %s\n", url)
+func (s *site) getPageLinks(url string) ([]string, error) {
 	r, err := http.Get(url)
 	if err != nil {
 		fmt.Println(err)
 		return nil, err
 	}
 	s.visited[url] = true
-	pageLinks, err := link.Parse(r.Body)
+	links, err := link.Parse(r.Body)
 	if err != nil {
 		return nil, err
 	}
 	r.Body.Close()
 	result := make([]string, 0)
-	for _, l := range pageLinks {
+	for _, l := range links {
 		if isAnchorLink(l.Href) {
 			continue
 		}
@@ -87,7 +87,22 @@ func (s *site) followLink(url string) ([]string, error) {
 			continue
 		}
 		result = append(result, url)
-		childLinks, err := s.followLink(url)
+	}
+	return result, nil
+}
+
+func (s *site) followLink(url string, depth int) ([]string, error) {
+	//fmt.Printf("GET %s\n", url)
+	if s.maxDepth >= 0 && depth > s.maxDepth {
+		//fmt.Println("exceeded max depth")
+		return nil, nil
+	}
+	result, err := s.getPageLinks(url)
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range result {
+		childLinks, err := s.followLink(l, depth+1)
 		if err != nil {
 			return nil, err
 		}
@@ -96,7 +111,7 @@ func (s *site) followLink(url string) ([]string, error) {
 	return result, nil
 }
 
-func newSite(url string) (*site, error) {
+func newSite(url string, maxDepth int) (*site, error) {
 	if !strings.HasSuffix(url, "/") {
 		url = url + "/"
 	}
@@ -108,15 +123,16 @@ func newSite(url string) (*site, error) {
 	s.url = url
 	s.domain = parsedURL.Host
 	s.visited = make(map[string]bool)
+	s.maxDepth = maxDepth
 	return &s, nil
 }
 
-func NewSiteMap(url string) (*SiteMap, error) {
-	s, err := newSite(url)
+func NewSiteMap(url string, maxDepth int) (*SiteMap, error) {
+	s, err := newSite(url, maxDepth)
 	if err != nil {
 		return nil, err
 	}
-	links, err := s.followLink(url)
+	links, err := s.followLink(url, 0)
 	if err != nil {
 		return nil, err
 	}
